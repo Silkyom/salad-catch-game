@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>index.html</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  :root { --ink: #3b2f2a; --paper: #fff8ec; --page: #f3e7cc; --accent: #ff7a45; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--page);
+    display: grid;
+    place-items: center;
+    padding: env(safe-area-inset-top, 0px) 12px env(safe-area-inset-bottom, 0px);
+    font-family: 'Press Start 2P', monospace;
+    color: var(--ink);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .wrap { width: min(92vw, 420px); }
+  .hud {
+    display: flex;
+    justify-content: space-between;
+    font-size: clamp(9px, 2.4vw, 12px);
+    margin-bottom: 12px;
+  }
+  .stage {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 5;
+    background: var(--paper);
+    border: 4px solid var(--ink);
+    box-shadow: 8px 8px 0 var(--ink);
+    touch-action: none;
+  }
+  canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; text-align: center;
+    background: rgba(255, 248, 236, 0.9);
+    line-height: 1.8;
+  }
+  .overlay[hidden] { display: none; }
+  .overlay h2 { margin: 0; font-weight: 400; font-size: clamp(14px, 4vw, 20px); letter-spacing: 0.06em; }
+  .overlay p { margin: 0; font-size: clamp(7px, 2vw, 9px); }
+  button {
+    font-family: inherit;
+    font-size: clamp(9px, 2.6vw, 12px);
+    background: var(--accent);
+    color: var(--ink);
+    border: 4px solid var(--ink);
+    box-shadow: 4px 4px 0 var(--ink);
+    padding: 12px 18px;
+    cursor: pointer;
+  }
+  button:active { transform: translate(3px, 3px); box-shadow: 1px 1px 0 var(--ink); }
+  button:focus-visible { outline: 3px dashed var(--ink); outline-offset: 4px; }
+  .hint { font-size: 8px; margin-top: 12px; text-align: center; opacity: 0.75; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud">
+    <span>SCORE <b id="score">0</b></span>
+    <span>LIVES <b id="lives">3</b></span>
+    <span>LV <b id="level">1</b></span>
+  </div>
+  <div class="stage" id="stage">
+    <canvas id="c" width="160" height="200" role="img" aria-label="A salad bowl catching falling fruits and vegetables"></canvas>
+    <div class="overlay" id="menu">
+      <h2>SALAD CATCH</h2>
+      <p>Catch the healthy foods<br>in your bowl.<br>Miss 3 and the bowl is empty.</p>
+      <button id="startBtn">START</button>
+      <p class="hint">← → or A D / drag to move</p>
+    </div>
+    <div class="overlay" id="over" hidden>
+      <h2>BOWL EMPTY</h2>
+      <p id="finalScore">SCORE 0</p>
+      <button id="againBtn">PLAY AGAIN</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const W = 160, H = 200;
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const $ = id => document.getElementById(id);
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const P = {
+    K: '#3b2f2a', R: '#ff4d3d', W: '#ffffff', Q: '#eef2fb',
+    Y: '#ffd23f', O: '#e39b12', G: '#2f9e5b', L: '#7ad69a', T: '#f0553a',
+    F: '#ff9f5a', C: '#9fd0c8', b: '#6fb0a6', PAPER: '#fff8ec', DOT: '#d8c6a0'
+  };
+
+  const px = (x, y, col) => { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); };
+  const rect = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
+  const sprite = (rows, x, y) => {
+    rows.forEach((row, r) => {
+      for (let c = 0; c < row.length; c++) {
+        const ch = row[c];
+        if (ch !== '.' && P[ch]) px(x + c, y + r, P[ch]);
+      }
+    });
+  };
+
+  // Sprites (same art family as the SALAD diagram)
+  const SPR = {
+    apple: ["......KG....", ".....K.GG...", "...KKRRRKK..", "..KRRRRRRRK.",
+            ".KRWWRRRRRRK", ".KRWRRRRRRRK", ".KRRRRRRRRRK", "..KRRRRRRRK.",
+            "...KRRRRRK..", "....KKKKK..."],
+    watermelon: ["KKKKKKKKKKKK", "KGGGGGGGGGGK", "KWTTTTTTTTWK", ".KTTKTTKTTK.",
+                 "..KTTTKTTK..", "...KTTKTK...", "....KTTK....", ".....KK....."],
+    banana: ["........KKK", ".......KYYK", "......KYYYK", "...KKKYYYK.",
+             "..KYYYYYK..", ".KYYYYYYK..", "KYYYYYYK...", "KYYYYYK....",
+             ".KOOOOK....", "..KKKK....."],
+    avocado: ["...KKKKK...", "..KGGGGGK..", ".KGGGGGGGK.", ".KGGGGGGGK.",
+              ".KGGGGGGGK.", "..KGGGGGK..", "...KKKKK..."],
+    orange: ["..KKKKKK..", ".KWWWWWWK.", "KFFFFFFFFK", "KFFFFFFFFK",
+             "KFFFFFFFFK", ".KFFFFFFK.", "..KKKKKK.."],
+    egg: ["...KKKKK...", "..KWWWWWK..", ".KWWWYYYWK.", "KWWWYYYYYWK",
+          "KWWWYYYYYWK", ".KWWWYYYWK.", "..KWWWWWK.."],
+    milk: ["..KKKKK..", "..KWWWK..", ".KKKKKKK.", "KCCCCCCCK", "KCCCCCCCK",
+           "KWWWWWWWK", "KWWWWWWWK", "KCCCCCCCK", "KCCCCCCCK", "KCCCCCCCK", "KKKKKKKKK"],
+    tomato: ["..G.G.G.", ".GGGGGG.", "...K....", ".KTTTTTK", "KTTWTTTK",
+             "KTTTTTTK", "KTTTTTTK", ".KTTTTK.", "..KKKK.."],
+    kale: ["..GG.GG..", ".GLGGGLG.", "GGGGKGGGG", "GLGGGGGLG", ".GGGKGGG.", "..GGGGG.."]
+  };
+  const TYPES = Object.keys(SPR).filter(k => k !== 'kale');
+  const sizeOf = rows => ({ w: Math.max(...rows.map(r => r.length)), h: rows.length });
+
+  const BOWL_W = 28, BOWL_Y = 178;
+  const drawBowl = (x, y) => {
+    for (let c = 0; c < BOWL_W; c++) {
+      px(x + c, y, P.K); px(x + c, y + 1, P.W); px(x + c, y + 2, P.Q);
+    }
+    const inset = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    for (let r = 0; r < 9; r++) {
+      const yy = y + 3 + r, i = inset[r];
+      if (r === 8) { for (let c = i; c < BOWL_W - i; c++) px(x + c, yy, P.K); continue; }
+      px(x + i, yy, P.K); px(x + BOWL_W - 1 - i, yy, P.K);
+      for (let c = i + 1; c < BOWL_W - 1 - i; c++) px(x + c, yy, r < 5 ? P.C : P.b);
+    }
+  };
+
+  // Game state
+  let state = 'menu';
+  let bowlX, bowlTarget, items, particles, score, lives, level, spawnTimer, lastT, shake;
+  const keys = { left: false, right: false };
+
+  const reset = () => {
+    bowlX = (W - BOWL_W) / 2;
+    bowlTarget = bowlX;
+    items = [];
+    particles = [];
+    score = 0; lives = 3; level = 1;
+    spawnTimer = 0.6;
+    shake = 0;
+    updateHud();
+  };
+
+  const updateHud = () => {
+    $('score').textContent = score;
+    $('lives').textContent = lives;
+    $('level').textContent = level;
+  };
+
+  const spawn = () => {
+    const type = TYPES[Math.floor(Math.random() * TYPES.length)];
+    const rows = SPR[type];
+    const { w, h } = sizeOf(rows);
+    items.push({
+      rows, w, h,
+      x: 4 + Math.random() * (W - w - 8),
+      y: -h,
+      vy: 28 + level * 5 + Math.random() * 8,
+      wobble: Math.random() * 6
+    });
+  };
+
+  const burst = (x, y, col) => {
+    for (let i = 0; i < 10; i++) {
+      particles.push({
+        x, y,
+        vx: (Math.random() - 0.5) * 90,
+        vy: -Math.random() * 90 - 20,
+        life: 0.6 + Math.random() * 0.3,
+        col
+      });
+    }
+  };
+
+  // Tiny sound effects via WebAudio (created on first user gesture)
+  let audio = null;
+  const beep = (freq, dur, type = 'square') => {
+    try {
+      if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.value = 0.04;
+      o.connect(g); g.connect(audio.destination);
+      o.start(); o.stop(audio.currentTime + dur);
+    } catch (e) { /* audio unavailable: ignore */ }
+  };
+
+  const start = () => {
+    reset();
+    state = 'play';
+    $('menu').hidden = true;
+    $('over').hidden = true;
+    lastT = performance.now();
+    requestAnimationFrame(loop);
+  };
+
+  const gameOver = () => {
+    state = 'over';
+    $('finalScore').textContent = 'SCORE ' + score;
+    $('over').hidden = false;
+    beep(180, 0.4, 'sawtooth');
+  };
+
+  const update = dt => {
+    // Movement: keys, or ease toward pointer target
+    const dir = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    if (dir) bowlTarget = bowlX + dir * 40;
+    bowlX += (bowlTarget - bowlX) * Math.min(1, dt * 12);
+    bowlX = Math.max(0, Math.min(W - BOWL_W, bowlX));
+
+    // Level from score
+    const newLevel = Math.floor(score / 100) + 1;
+    if (newLevel !== level) { level = newLevel; updateHud(); }
+
+    // Spawning
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      spawn();
+      spawnTimer = Math.max(0.4, 1.1 - level * 0.07) * (0.8 + Math.random() * 0.4);
+    }
+
+    // Items
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      it.y += it.vy * dt;
+      it.wobble += dt * 3;
+      const cx = it.x + it.w / 2;
+      const bottom = it.y + it.h;
+      if (bottom >= BOWL_Y && bottom <= BOWL_Y + 8 &&
+          cx > bowlX + 2 && cx < bowlX + BOWL_W - 2) {
+        score += 10;
+        burst(cx, BOWL_Y, '#ffd23f');
+        beep(660 + Math.random() * 120, 0.08);
+        items.splice(i, 1);
+        updateHud();
+      } else if (it.y > H) {
+        lives--;
+        shake = 0.25;
+        burst(it.x + it.w / 2, H - 6, '#ff4d3d');
+        beep(120, 0.15);
+        items.splice(i, 1);
+        updateHud();
+        if (lives <= 0) { gameOver(); return; }
+      }
+    }
+
+    // Particles
+    particles.forEach(p => {
+      p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 220 * dt; p.life -= dt;
+    });
+    particles = particles.filter(p => p.life > 0);
+
+    if (shake > 0) shake -= dt;
+  };
+
+  const draw = t => {
+    ctx.save();
+    if (shake > 0 && !reduce) ctx.translate(Math.round((Math.random() - 0.5) * 4), 0);
+    ctx.clearRect(-4, -4, W + 8, H + 8);
+
+    // Dotted "counter" line above bowl
+    for (let x = 0; x < W; x += 3) px(x, BOWL_Y + 16, P.DOT);
+
+    items.forEach(it => sprite(it.rows, it.x + Math.sin(it.wobble) * 2, it.y));
+
+    drawBowl(Math.round(bowlX), BOWL_Y);
+    sprite(SPR.kale, Math.round(bowlX) + 4, BOWL_Y - 6);
+
+    particles.forEach(p => px(p.x, p.y, p.col));
+
+    ctx.restore();
+  };
+
+  const loop = now => {
+    if (state !== 'play') return;
+    const dt = Math.min(0.05, (now - lastT) / 1000);
+    lastT = now;
+    update(dt);
+    if (state === 'play') {
+      draw(now);
+      requestAnimationFrame(loop);
+    } else {
+      draw(now);
+    }
+  };
+
+  // Idle preview of the bowl behind the menu
+  const preview = () => {
+    if (state !== 'menu') return;
+    ctx.clearRect(0, 0, W, H);
+    drawBowl(Math.round((W - BOWL_W) / 2), BOWL_Y);
+    sprite(SPR.kale, Math.round((W - BOWL_W) / 2) + 4, BOWL_Y - 6);
+    sprite(SPR.apple, 30, 40);
+    sprite(SPR.egg, 110, 70);
+    sprite(SPR.tomato, 60, 110);
+  };
+
+  // Input: keyboard
+  const keyMap = { ArrowLeft: 'left', a: 'left', A: 'left', ArrowRight: 'right', d: 'right', D: 'right' };
+  window.addEventListener('keydown', e => {
+    if (keyMap[e.key]) { keys[keyMap[e.key]] = true; e.preventDefault(); }
+    if ((e.key === ' ' || e.key === 'Enter') && state !== 'play') {
+      e.preventDefault();
+      start();
+    }
+  });
+  window.addEventListener('keyup', e => {
+    if (keyMap[e.key]) keys[keyMap[e.key]] = false;
+  });
+
+  // Input: pointer / touch drag
+  const stage = $('stage');
+  const toLogicalX = clientX => {
+    const r = canvas.getBoundingClientRect();
+    return (clientX - r.left) / r.width * W - BOWL_W / 2;
+  };
+  stage.addEventListener('pointermove', e => {
+    if (state === 'play') { bowlTarget = toLogicalX(e.clientX); keys.left = keys.right = false; }
+  });
+  stage.addEventListener('pointerdown', e => {
+    if (state === 'play') { bowlTarget = toLogicalX(e.clientX); }
+  });
+
+  $('startBtn').addEventListener('click', start);
+  $('againBtn').addEventListener('click', start);
+
+  reset();
+  preview();
+  // Keep the idle preview drawn until play starts
+  const previewLoop = () => { if (state === 'menu') { preview(); requestAnimationFrame(previewLoop); } };
+  if (!reduce) requestAnimationFrame(previewLoop);
+})();
+</script>
+</body>
+</html>
